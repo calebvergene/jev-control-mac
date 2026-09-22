@@ -72,7 +72,10 @@ final class HotkeyManager {
 
     private func scheduleRetry() {
         guard retryTimer == nil else { return }
-        retryTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        // `.common` modes, not `scheduledTimer`'s `.default`: otherwise the
+        // retry stops while a menu is open, which is a likely moment for the
+        // user to be granting the permission it is waiting on.
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
                 guard self.tap.start() else { return }
@@ -81,6 +84,8 @@ final class HotkeyManager {
                 self.onTapStateChange?(true)
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        retryTimer = timer
     }
 
     // MARK: - State machine

@@ -23,6 +23,20 @@ struct OnboardingView: View {
                         Permissions.openSettings(kind)
                     }
                 }
+                if state.needsRelaunch {
+                    HStack(spacing: 8) {
+                        Label("Granted, but this process is still seeing the old answer.",
+                              systemImage: "arrow.clockwise.circle")
+                            .font(.caption)
+                        Spacer()
+                        Button("Relaunch") { state.relaunch() }
+                            .controlSize(.small)
+                            .buttonStyle(.borderedProminent)
+                    }
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.orange.opacity(0.15)))
+                }
+
                 Text("macOS attributes these to the app bundle. If you rebuild Jev Control, "
                      + "macOS sees a new signature and you may have to re-tick the boxes.")
                     .font(.caption).foregroundStyle(.secondary)

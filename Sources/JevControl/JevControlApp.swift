@@ -25,6 +25,9 @@ private struct MenuBarContent: View {
         Divider()
 
         Button("Setup…") { delegate.showOnboarding() }
+        if state.needsRelaunch {
+            Button("Relaunch to pick up permissions") { state.relaunch() }
+        }
         Toggle("Show pill", isOn: $state.showPill)
         Toggle("Sounds", isOn: $state.playSounds)
 
@@ -45,6 +48,7 @@ private struct MenuBarContent: View {
     }
 
     private var statusLine: String {
+        if state.needsRelaunch { return "Relaunch needed" }
         if !state.isTapActive { return "Waiting for permissions" }
         if state.needsRemap { return "Caps Lock not remapped" }
         if state.isListening { return state.isLatched ? "Listening (latched)" : "Listening" }

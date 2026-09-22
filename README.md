@@ -1,13 +1,13 @@
 # Jev Control
 
-Hold Caps Lock, talk to your Mac.
+Hold a key, talk to your Mac.
 
 This is the macOS app port of [jev-voice](https://github.com/kevinbadi/jev-voice) —
 a real signed `.app` instead of a Python process borrowing your terminal's
 permissions.
 
-**Status: Chunk 1 of 8.** The app shell, permissions, the Caps Lock hotkey and
-the floating pill. No microphone, no transcription, no actions yet.
+**Early.** The app shell, permissions, the push-to-talk hotkey and the floating
+pill are in. No microphone, no transcription, no actions yet.
 
 ## What works today
 
@@ -15,14 +15,16 @@ the floating pill. No microphone, no transcription, no actions yet.
 - Setup window that requests and live-polls Microphone, Accessibility, Input
   Monitoring and Screen Recording, and deep-links to the right System Settings
   pane when macOS has already made up its mind.
-- Caps Lock → F18 remap via `hidutil`, persisted with a LaunchAgent, with an
-  Undo button.
-- A `CGEvent` tap on F18 that swallows the key, so the app you are controlling
-  never sees it.
-- Push-to-talk: hold to listen, release to stop. A press under 250 ms latches
-  instead, and the next press unlatches — the same rule jev-voice uses.
+- Push-to-talk on **Left Option** by default, switchable to Right Option or
+  Caps Lock.
+- A `CGEvent` tap that swallows the key, so the app you are controlling never
+  sees it — including the modifier flag on anything you type while holding it.
+- Hold to listen, release to stop. A press under 250 ms latches instead, and
+  the next press unlatches — the same rule jev-voice uses.
 - A floating pill at the top of the screen: gray idle, red listening, with a
   lock glyph when latched.
+- Optional Caps Lock → F18 remap via `hidutil`, persisted with a LaunchAgent,
+  with an Undo button.
 
 ## Requirements
 
@@ -52,20 +54,19 @@ set a Developer ID first:
 JEV_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./Scripts/build.sh
 ```
 
-## Testing Chunk 1
+## Testing it
 
 1. Launch the app. The Setup window opens because nothing is granted yet.
 2. Grant **Accessibility** and **Input Monitoring**. The window polls once a
    second, so the dots go green without a relaunch, and the key tap installs
    itself on the next retry — also without a relaunch.
-3. Click **Remap Caps Lock**. Caps Lock stops toggling capitals.
-4. Hold Caps Lock. The pill turns red and says "Listening…", and a Tink plays.
-   Release it: gray, and a Pop.
-5. Tap Caps Lock quickly instead. The pill stays red with a padlock. Press
+3. Hold **Left Option**. The pill turns red and says "Listening…", and a Tink
+   plays. Release it: gray, and a Pop.
+4. Tap Left Option quickly instead. The pill stays red with a padlock. Press
    again to stop.
-6. While holding Caps Lock, confirm the focused app never receives the key and
-   never loses focus — type in TextEdit, hold Caps Lock mid-word, keep typing.
-7. Check System Settings › Privacy & Security. The entries say **Jev Control**,
+5. Type in TextEdit, hold Left Option mid-word, keep typing. Focus must not
+   move, and the letters must come out unaccented — no `å` for `⌥a`.
+6. Check System Settings › Privacy & Security. The entries say **Jev Control**,
    not Terminal.
 
 ## If permissions misbehave
@@ -110,13 +111,28 @@ Scripts/
   reset-permissions.sh         tccutil reset for this bundle
 ```
 
-## Why Caps Lock becomes F18
+## Why Left Option, and why Caps Lock is awkward
 
-Caps Lock is a latching modifier: macOS reports a state change, not a press and
-a release, so it cannot drive push-to-talk. `hidutil` remaps it at the HID layer
-to F18 — a key no Mac keyboard has and no app binds — which turns it into an
-ordinary key with a clean down/up pair. The mapping does not survive a reboot,
-so the same command is installed as a LaunchAgent.
+Push-to-talk needs a key you can hold for seconds with one hand, that emits a
+clean press *and* release, and that costs nothing to swallow.
+
+Option qualifies on all three. Modifiers report through `flagsChanged` on both
+press and release, and left and right are told apart by the device-dependent
+flag bits (`0x20` / `0x40`) rather than the shared `maskAlternate`, which both
+set. Nothing has to be installed, and nothing is left behind if the app dies.
+
+One wrinkle: the window server stamps modifier flags onto key events from
+hardware state, not from the tap, so swallowing the Option press is not enough
+— `⌥a` would still arrive as `å`. The tap also scrubs the Option bits off any
+key pressed while the trigger is held.
+
+Caps Lock cannot work this way. It is a latching toggle: macOS reports a state
+change, not a press and a release, and the HID driver adds an activation delay.
+The only way to get hold semantics is to remap it to F18 — a key no Mac
+keyboard has — at the HID layer with `hidutil`. That works, but it is a
+system-wide change affecting every app and every user on the machine, it does
+not survive a reboot without a LaunchAgent, and it outlives the app if it
+crashes. Hence Option by default, Caps Lock by choice.
 
 ## License
 

@@ -30,10 +30,12 @@ private struct MenuBarContent: View {
 
         Divider()
 
+        Picker("Push-to-talk key", selection: $state.trigger) {
+            ForEach(HotkeyTrigger.allCases) { Text($0.title).tag($0) }
+        }
+
         if state.remapActive {
             Button("Restore Caps Lock") { state.removeRemap() }
-        } else {
-            Button("Remap Caps Lock → F18") { state.installRemap() }
         }
 
         Divider()
@@ -44,9 +46,9 @@ private struct MenuBarContent: View {
 
     private var statusLine: String {
         if !state.isTapActive { return "Waiting for permissions" }
-        if !state.remapActive { return "Caps Lock not remapped" }
+        if state.needsRemap { return "Caps Lock not remapped" }
         if state.isListening { return state.isLatched ? "Listening (latched)" : "Listening" }
-        return "Ready — hold Caps Lock"
+        return "Ready — hold \(state.trigger.title)"
     }
 }
 
@@ -63,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state.start()
 
         // First run, or a revoked permission: show the checklist.
-        if !state.permissions.requiredAreGranted || !state.remapActive {
+        if !state.permissions.requiredAreGranted || state.needsRemap {
             showOnboarding()
         }
     }

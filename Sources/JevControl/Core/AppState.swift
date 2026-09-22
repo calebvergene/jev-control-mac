@@ -28,6 +28,20 @@ final class AppState: ObservableObject {
         didSet { UserDefaults.standard.set(playSounds, forKey: Keys.playSounds) }
     }
 
+    @Published var trigger: HotkeyTrigger = {
+        let stored = UserDefaults.standard.string(forKey: Keys.trigger) ?? ""
+        return HotkeyTrigger(rawValue: stored) ?? .default
+    }() {
+        didSet {
+            UserDefaults.standard.set(trigger.rawValue, forKey: Keys.trigger)
+            hotkey.trigger = trigger
+            refresh()
+        }
+    }
+
+    /// True when the chosen trigger needs a remap that is not installed.
+    var needsRemap: Bool { trigger.needsCapsLockRemap && !remapActive }
+
     let pill = PillController()
     let hotkey = HotkeyManager()
 
@@ -36,6 +50,7 @@ final class AppState: ObservableObject {
     private enum Keys {
         static let showPill = "ai.jev.control.showPill"
         static let playSounds = "ai.jev.control.playSounds"
+        static let trigger = "ai.jev.control.trigger"
     }
 
     private init() {
@@ -52,6 +67,7 @@ final class AppState: ObservableObject {
     // MARK: - Lifecycle
 
     func start() {
+        hotkey.trigger = trigger
         refresh()
         pill.isEnabled = showPill
         pill.set(.idle, "Idle")

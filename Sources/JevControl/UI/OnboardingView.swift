@@ -31,27 +31,29 @@ struct OnboardingView: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Caps Lock").font(.headline)
-                Text("Caps Lock latches rather than pressing, so it can't drive push-to-talk. "
-                     + "Jev remaps it to F18 — a key nothing else uses — with hidutil.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text("Push-to-talk key").font(.headline)
 
-                HStack(spacing: 10) {
-                    StatusDot(ok: state.remapActive)
-                    Text(state.remapActive ? "Caps Lock → F18 is active" : "Caps Lock is unchanged")
-                    Spacer()
-                    if state.remapActive {
-                        Button("Undo") { state.removeRemap() }
-                    } else {
-                        Button("Remap Caps Lock") { state.installRemap() }
-                            .buttonStyle(.borderedProminent)
-                    }
+                Picker("", selection: $state.trigger) {
+                    ForEach(HotkeyTrigger.allCases) { Text($0.title).tag($0) }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
 
-                if state.remapActive && !state.remapPersisted {
-                    Label("Will not survive a reboot — the LaunchAgent is missing.",
-                          systemImage: "exclamationmark.triangle")
-                        .font(.caption).foregroundStyle(.orange)
+                Text(state.trigger.detail)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if state.trigger.needsCapsLockRemap {
+                    CapsLockRemapSection(state: state)
+                } else if state.remapActive {
+                    HStack(spacing: 8) {
+                        Label("Caps Lock is still remapped to F18 from an earlier run.",
+                              systemImage: "info.circle")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Restore") { state.removeRemap() }
+                            .controlSize(.small)
+                    }
                 }
             }
 
@@ -60,7 +62,7 @@ struct OnboardingView: View {
             HStack(spacing: 10) {
                 StatusDot(ok: state.isTapActive)
                 Text(state.isTapActive
-                     ? "Key tap installed — hold Caps Lock to test."
+                     ? "Key tap installed — hold \(state.trigger.title) to test."
                      : "Key tap refused. Grant Accessibility and Input Monitoring.")
                     .font(.callout)
                 Spacer()
@@ -73,6 +75,34 @@ struct OnboardingView: View {
         .padding(22)
         .frame(width: 520)
         .onAppear { state.refresh() }
+    }
+}
+
+/// Only shown when Caps Lock is the chosen trigger — it is the one key that
+/// cannot work without modifying the system.
+private struct CapsLockRemapSection: View {
+    @ObservedObject var state: AppState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                StatusDot(ok: state.remapActive)
+                Text(state.remapActive ? "Caps Lock → F18 is active" : "Caps Lock is unchanged")
+                Spacer()
+                if state.remapActive {
+                    Button("Undo") { state.removeRemap() }
+                } else {
+                    Button("Remap Caps Lock") { state.installRemap() }
+                        .buttonStyle(.borderedProminent)
+                }
+            }
+            if state.remapActive && !state.remapPersisted {
+                Label("Will not survive a reboot — the LaunchAgent is missing.",
+                      systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+        }
+        .padding(.top, 2)
     }
 }
 

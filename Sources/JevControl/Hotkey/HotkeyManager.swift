@@ -24,6 +24,17 @@ final class HotkeyManager {
     private(set) var isLatched = false
     var isTapActive: Bool { tap.isRunning }
 
+    /// Switching keys mid-run cancels anything in flight, so a half-held key
+    /// cannot leave the app stuck listening.
+    var trigger: HotkeyTrigger {
+        get { tap.trigger }
+        set {
+            guard newValue != tap.trigger else { return }
+            if isListening { finish(latched: isLatched) }
+            tap.trigger = newValue
+        }
+    }
+
     private let tap = HotkeyTap()
     private var pressedAt: CFTimeInterval = 0
     private var retryTimer: Timer?

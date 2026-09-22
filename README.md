@@ -41,18 +41,43 @@ That builds `JevControl.app`, copies it to `/Applications/Jev Control.app` and
 launches it. Installing to `/Applications` matters: macOS ties permissions to a
 path and a code signature, and an app that moves loses its grants.
 
+The first build offers to create a local self-signed certificate and prompts
+for your login password. Say yes. Without a signing identity the build is
+ad-hoc signed, and macOS derives the designated requirement from the binary's
+own hash:
+
+```
+designated => cdhash H"979f7b9c..."
+```
+
+Accessibility and Input Monitoring grants are bound to that requirement, so
+every rebuild revokes them — while System Settings keeps showing the app ticked,
+because the row survives and only the hash it points at is gone. A permission
+that reads as granted and behaves as denied. Any certificate keys the
+requirement to itself instead, and survives rebuilds.
+
+`JEV_ADHOC=1` skips the prompt if you really want ad-hoc. Non-interactive
+builds (CI) fall back to it automatically.
+
 To build without installing:
 
 ```bash
 ./Scripts/build.sh
 ```
 
-The result is `build/JevControl.app`, ad-hoc signed. For a distributable build,
-set a Developer ID first:
+## Distributing it
+
+None of the above applies to someone downloading a release — they drag the app
+to Applications, open it, and grant permissions once, like any other Mac app.
+That needs a Developer ID certificate (a paid Apple Developer account) and
+notarization:
 
 ```bash
 JEV_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./Scripts/build.sh
 ```
+
+Until there is a notarized release, the only supported path is building from
+source, and a downloaded unsigned build will be blocked by Gatekeeper.
 
 ## Testing it
 
@@ -71,15 +96,24 @@ JEV_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./Scripts/build
 
 ## If permissions misbehave
 
-An ad-hoc signature changes on every rebuild, so macOS can keep showing a
-ticked box it no longer honours. Forget them and grant again:
+Check what the signature actually claims:
+
+```bash
+codesign -d -r- "/Applications/Jev Control.app"
+```
+
+`certificate leaf = H"..."` is what you want. `cdhash H"..."` means the build
+was ad-hoc and grants will not survive a rebuild.
+
+To start clean, forget every grant:
 
 ```bash
 ./Scripts/reset-permissions.sh
 ```
 
-A Developer ID signature is stable across rebuilds and does not have this
-problem.
+Then delete any stale **Jev Control** rows in System Settings › Privacy &
+Security › Accessibility and Input Monitoring with the **−** button — unticking
+is not enough, since a stale row still shadows the new grant — and grant again.
 
 ## If Caps Lock is stuck as F18
 

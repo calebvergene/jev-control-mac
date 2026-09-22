@@ -34,7 +34,7 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 DEV_CERT="${JEV_CERT_NAME:-Jev Control Dev}"
 
 if [ -z "$JEV_SIGN_IDENTITY" ]; then
-  if security find-identity -v -p codesigning 2>/dev/null | grep -q "$DEV_CERT"; then
+  if security find-identity -p codesigning 2>/dev/null | grep -q "\"$DEV_CERT\""; then
     JEV_SIGN_IDENTITY="$DEV_CERT"
   elif [ "$JEV_ADHOC" != "1" ] && [ -t 0 ]; then
     echo
@@ -50,7 +50,7 @@ if [ -z "$JEV_SIGN_IDENTITY" ]; then
       [Nn]*) ;;
       *)
         "$ROOT/Scripts/create-signing-cert.sh"
-        if security find-identity -v -p codesigning 2>/dev/null | grep -q "$DEV_CERT"; then
+        if security find-identity -p codesigning 2>/dev/null | grep -q "\"$DEV_CERT\""; then
           JEV_SIGN_IDENTITY="$DEV_CERT"
         fi
         ;;

@@ -46,11 +46,38 @@ final class AppState: ObservableObject {
         }
     }
 
+    @Published var model: WhisperModel = {
+        let stored = UserDefaults.standard.string(forKey: Keys.model) ?? ""
+        return WhisperModel(rawValue: stored) ?? .default
+    }() {
+        didSet {
+            guard model != oldValue else { return }
+            UserDefaults.standard.set(model.rawValue, forKey: Keys.model)
+            loadModel()
+        }
+    }
+
+    /// nil means "follow the system default input".
+    @Published var microphoneUID: String? = UserDefaults.standard.string(forKey: Keys.microphone) {
+        didSet {
+            UserDefaults.standard.set(microphoneUID, forKey: Keys.microphone)
+        }
+    }
+
+    @Published private(set) var speechStatus: Transcriber.Status = .idle
+    /// The last thing heard, kept for the Setup window.
+    @Published private(set) var lastTranscript: String?
+
     /// True when the chosen trigger needs a remap that is not installed.
     var needsRemap: Bool { trigger.needsCapsLockRemap && !remapActive }
 
     let pill = PillController()
     let hotkey = HotkeyManager()
+
+    private let recorder = AudioRecorder()
+    private let transcriber = Transcriber()
+    /// Guards against a second utterance landing while the first is transcribing.
+    private var transcriptionTask: Task<Void, Never>?
 
     private var pollTimer: Timer?
 
@@ -58,6 +85,8 @@ final class AppState: ObservableObject {
         static let showPill = "ai.jev.control.showPill"
         static let playSounds = "ai.jev.control.playSounds"
         static let trigger = "ai.jev.control.trigger"
+        static let model = "ai.jev.control.model"
+        static let microphone = "ai.jev.control.microphone"
     }
 
     private init() {
@@ -80,13 +109,52 @@ final class AppState: ObservableObject {
         pill.set(.idle, "Idle")
         hotkey.start()
         startPolling()
+        loadModel()
     }
 
     func shutDown() {
         pollTimer?.invalidate()
         pollTimer = nil
+        transcriptionTask?.cancel()
+        recorder.stop()
         hotkey.stop()
         pill.hide()
+    }
+
+    // MARK: - Speech model
+
+    /// Downloads if needed, loads, and prewarms. First run pulls the weights
+    /// from Hugging Face, which is why the pill says so rather than just
+    /// failing to hear anything.
+    private func loadModel() {
+        let model = self.model
+        Task { [weak self] in
+            guard let self else { return }
+            await self.transcriber.prepare(model: model) { status in
+                Task { @MainActor [weak self] in
+                    self?.apply(speechStatus: status)
+                }
+            }
+        }
+    }
+
+    private func apply(speechStatus status: Transcriber.Status) {
+        speechStatus = status
+        switch status {
+        case .failed(let message):
+            lastError = "Speech model: \(message)"
+            pill.set(.error, "Speech model failed to load", revertAfter: 6)
+        case .downloading(let fraction) where fraction > 0 && fraction < 1:
+            // Only while idle: a download finishing mid-utterance must not
+            // stomp on the transcript.
+            if !isListening {
+                pill.set(.thinking, "Downloading \(model.title) model… \(Int(fraction * 100))%")
+            }
+        case .ready:
+            if !isListening { pill.set(.idle, "Idle") }
+        default:
+            break
+        }
     }
 
     /// TCC grants land asynchronously and without a notification, so the only
@@ -184,8 +252,24 @@ final class AppState: ObservableObject {
     // MARK: - Push-to-talk
 
     private func beginListening() {
+        // A new utterance supersedes one still being transcribed.
+        transcriptionTask?.cancel()
+
+        do {
+            try recorder.start(deviceUID: microphoneUID)
+        } catch {
+            pill.set(.error, error.localizedDescription, revertAfter: 4)
+            lastError = error.localizedDescription
+            if case AudioRecorder.RecorderError.noInputAvailable = error,
+               !permissions[.microphone].isGranted {
+                Permissions.openSettings(.microphone)
+            }
+            return
+        }
+
         isListening = true
         isLatched = false
+        lastError = nil
         play(.start)
         pill.set(.listening, "Listening…")
     }
@@ -194,8 +278,43 @@ final class AppState: ObservableObject {
         isListening = false
         isLatched = false
         play(.stop)
-        // Chunk 2 replaces this with the transcript.
-        pill.set(.idle, "Idle")
+
+        let samples = recorder.stop()
+        let speech = SilenceTrimmer.trim(samples)
+
+        guard !speech.isEmpty else {
+            pill.set(.idle, "Heard nothing", revertAfter: 1.5)
+            return
+        }
+
+        guard speechStatus.isReady else {
+            pill.set(.thinking, "Still loading the speech model…", revertAfter: 3)
+            return
+        }
+
+        let seconds = Double(speech.count) / AudioRecorder.sampleRate
+        pill.set(.thinking, "Transcribing…")
+
+        transcriptionTask = Task { [weak self] in
+            guard let self else { return }
+            let started = Date()
+            do {
+                let text = try await self.transcriber.transcribe(speech)
+                guard !Task.isCancelled else { return }
+                let elapsed = Date().timeIntervalSince(started)
+                self.lastTranscript = text
+                self.pill.set(.heard, text, revertAfter: 5)
+                Log.debug(String(format: "heard %.1fs of speech in %.0f ms: %@",
+                                 seconds, elapsed * 1000, text))
+            } catch Transcriber.TranscriberError.empty {
+                guard !Task.isCancelled else { return }
+                self.pill.set(.idle, "Heard nothing", revertAfter: 1.5)
+            } catch {
+                guard !Task.isCancelled else { return }
+                self.lastError = error.localizedDescription
+                self.pill.set(.error, error.localizedDescription, revertAfter: 4)
+            }
+        }
     }
 
     /// The press turned out to be a tap: recording stays on until the next press.

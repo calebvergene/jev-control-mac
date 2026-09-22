@@ -25,6 +25,8 @@ pill are in. No microphone, no transcription, no actions yet.
   lock glyph when latched.
 - Optional Caps Lock → F18 remap via `hidutil`, persisted with a LaunchAgent,
   with an Undo button.
+- Speech to text on device with WhisperKit: hold the key, speak, and the pill
+  shows what it heard.
 
 ## Requirements
 
@@ -65,6 +67,31 @@ To build without installing:
 ./Scripts/build.sh
 ```
 
+## Speech models
+
+The Whisper weights are **not** in this repository and are not meant to be.
+`base.en` alone is about 150 MB of binary, which is past GitHub's per-file
+limit and would sit in the git history forever.
+
+Instead the app downloads them on first launch from
+[argmaxinc/whisperkit-coreml](https://huggingface.co/argmaxinc/whisperkit-coreml)
+and caches them in `~/Library/Application Support/JevControl/huggingface`.
+You do not need to fetch anything beforehand — the Setup window shows download
+progress, and the first run needs a network connection.
+
+| Model | Size | Notes |
+| --- | --- | --- |
+| `tiny.en` | ~75 MB | Fastest, least accurate |
+| `base.en` | ~150 MB | Default |
+| `small.en` | ~480 MB | Most accurate, noticeably slower |
+
+Pick one in Setup › Speech; switching downloads the new one and keeps the old.
+To reclaim the space, delete that folder — the app re-downloads what it needs.
+
+Measured on an M-series Mac with `base.en`: a 1.76 s utterance transcribes in
+about 90 ms. The model takes roughly 11 s to load and warm up at launch, which
+is why it is loaded once on startup rather than per utterance.
+
 ## Distributing it
 
 None of the above applies to someone downloading a release — they drag the app
@@ -85,13 +112,14 @@ source, and a downloaded unsigned build will be blocked by Gatekeeper.
 2. Grant **Accessibility** and **Input Monitoring**. The window polls once a
    second, so the dots go green without a relaunch, and the key tap installs
    itself on the next retry — also without a relaunch.
-3. Hold **Left Option**. The pill turns red and says "Listening…", and a Tink
-   plays. Release it: gray, and a Pop.
-4. Tap Left Option quickly instead. The pill stays red with a padlock. Press
+3. Wait for Setup › Speech to say "Model ready" — the first launch downloads it.
+4. Hold **Left Option** and say something. The pill turns red while you hold it,
+   then shows what it heard.
+5. Tap Left Option quickly instead. The pill stays red with a padlock. Press
    again to stop.
-5. Type in TextEdit, hold Left Option mid-word, keep typing. Focus must not
+6. Type in TextEdit, hold Left Option mid-word, keep typing. Focus must not
    move, and the letters must come out unaccented — no `å` for `⌥a`.
-6. Check System Settings › Privacy & Security. The entries say **Jev Control**,
+7. Check System Settings › Privacy & Security. The entries say **Jev Control**,
    not Terminal.
 
 ## If permissions misbehave

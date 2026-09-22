@@ -74,6 +74,10 @@ struct OnboardingView: View {
 
             Divider()
 
+            SpeechSection(state: state)
+
+            Divider()
+
             HStack(spacing: 10) {
                 StatusDot(ok: state.isTapActive)
                 Text(state.isTapActive
@@ -90,6 +94,64 @@ struct OnboardingView: View {
         .padding(22)
         .frame(width: 520)
         .onAppear { state.refresh() }
+    }
+}
+
+/// Microphone and model selection, plus whatever was last heard — which is
+/// the quickest way to tell whether the audio path is actually working.
+private struct SpeechSection: View {
+    @ObservedObject var state: AppState
+    @State private var devices: [AudioDevice] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Speech").font(.headline)
+
+            HStack {
+                Text("Microphone").frame(width: 90, alignment: .leading)
+                Picker("", selection: $state.microphoneUID) {
+                    Text("System default").tag(String?.none)
+                    ForEach(devices) { Text($0.name).tag(String?.some($0.uid)) }
+                }
+                .labelsHidden()
+            }
+
+            HStack {
+                Text("Model").frame(width: 90, alignment: .leading)
+                Picker("", selection: $state.model) {
+                    ForEach(WhisperModel.allCases) { Text($0.title).tag($0) }
+                }
+                .labelsHidden()
+            }
+
+            Text(state.model.detail).font(.caption).foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                StatusDot(ok: state.speechStatus.isReady)
+                Text(statusText).font(.callout)
+                Spacer()
+            }
+
+            if let transcript = state.lastTranscript {
+                Text("Last heard: \u{201C}\(transcript)\u{201D}")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .onAppear { devices = AudioDevices.inputDevices() }
+    }
+
+    private var statusText: String {
+        switch state.speechStatus {
+        case .idle: return "Model not loaded."
+        case .downloading(let fraction):
+            return fraction > 0
+                ? "Downloading… \(Int(fraction * 100))%"
+                : "Checking for the model…"
+        case .loading: return "Loading and warming up…"
+        case .ready: return "Model ready."
+        case .failed(let message): return "Model failed: \(message)"
+        }
     }
 }
 

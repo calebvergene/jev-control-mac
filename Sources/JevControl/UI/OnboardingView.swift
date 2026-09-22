@@ -37,8 +37,9 @@ struct OnboardingView: View {
                     .background(RoundedRectangle(cornerRadius: 6).fill(Color.orange.opacity(0.15)))
                 }
 
-                Text("macOS attributes these to the app bundle. If you rebuild Jev Control, "
-                     + "macOS sees a new signature and you may have to re-tick the boxes.")
+                Text("Accessibility and Input Monitoring open straight to their pane — "
+                     + "tick Jev Control there. If it is not listed, add it with + from "
+                     + "Applications.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -145,7 +146,7 @@ private struct PermissionRow: View {
             if state.isGranted {
                 Text("Granted").font(.caption).foregroundStyle(.secondary)
             } else {
-                Button(state == .denied ? "Open Settings" : "Grant") {
+                Button(kind.promptCanGrant && state != .denied ? "Grant" : "Open Settings") {
                     state == .denied ? openSettings() : request()
                 }
             }

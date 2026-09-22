@@ -40,6 +40,16 @@ enum PermissionKind: String, CaseIterable, Identifiable {
     /// three gate the hotkey and the mic.
     var isRequired: Bool { self != .screenRecording }
 
+    /// Whether the system prompt can actually grant the permission.
+    ///
+    /// Microphone and Screen Recording show a real Allow / Don't Allow dialog,
+    /// so prompting is worth it. Accessibility and Input Monitoring show a
+    /// dialog whose only useful button opens System Settings — it cannot grant
+    /// anything — so prompting just adds a click on the way there.
+    var promptCanGrant: Bool {
+        self == .microphone || self == .screenRecording
+    }
+
     /// Deep link into the matching System Settings pane.
     var settingsURL: URL {
         let pane: String
@@ -112,21 +122,21 @@ enum Permissions {
         }
     }
 
-    /// Fire the system prompt. Once a permission has been decided, macOS shows
-    /// nothing — so callers should fall back to `openSettings` on a `denied`.
+    /// Ask for a permission in whichever way actually gets the user closer to
+    /// having it: a real system dialog where one exists, System Settings
+    /// otherwise. Once a permission has been decided, macOS shows nothing — so
+    /// callers should fall back to `openSettings` on a `denied`.
     static func request(_ kind: PermissionKind, completion: (() -> Void)? = nil) {
-        switch kind {
-        case .accessibility:
-            let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-            _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+        guard kind.promptCanGrant else {
+            openSettings(kind)
             completion?()
+            return
+        }
 
-        case .inputMonitoring:
-            // Blocks while the prompt is up.
-            DispatchQueue.global(qos: .userInitiated).async {
-                _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
-                DispatchQueue.main.async { completion?() }
-            }
+        switch kind {
+        case .accessibility, .inputMonitoring:
+            // Unreachable: both are handled above.
+            completion?()
 
         case .microphone:
             AVCaptureDevice.requestAccess(for: .audio) { _ in

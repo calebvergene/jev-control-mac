@@ -80,9 +80,21 @@ final class AppState: ObservableObject {
     private var transcriptionTask: Task<Void, Never>?
 
     /// Live transcript, refreshed while the key is held.
+    ///
+    /// `committedText` covers audio before `committedSamples` and never
+    /// changes again; `liveTail` is the current, still-revisable hypothesis for
+    /// everything after it.
     private var liveTimer: Timer?
     private var livePartialTask: Task<Void, Never>?
-    private var livePartial: String = ""
+    private var committedText = ""
+    private var committedSamples = 0
+    private var liveTail = ""
+
+    private var livePartial: String {
+        guard !committedText.isEmpty else { return liveTail }
+        guard !liveTail.isEmpty else { return committedText }
+        return committedText + " " + liveTail
+    }
 
     /// How often the growing buffer is re-transcribed. Short enough to feel
     /// live, long enough that a pass has comfortably finished before the next
@@ -90,6 +102,15 @@ final class AppState: ObservableObject {
     private static let liveInterval: TimeInterval = 0.45
     /// Below this there is not enough audio for a useful hypothesis.
     private static let liveMinimumSeconds: Double = 0.6
+    /// A pause this long ends a sentence, and what precedes it is frozen.
+    private static let commitSilenceSeconds: TimeInterval = 0.5
+    /// Never commit on less speech than this.
+    private static let commitMinimumSpeechSeconds: TimeInterval = 0.4
+    /// Past this much unsettled audio, commit on a much shorter pause — nobody
+    /// should watch a whole paragraph rewrite itself because they did not
+    /// breathe.
+    private static let forceCommitAfterSeconds: Double = 6.0
+    private static let forcedCommitSilenceSeconds: TimeInterval = 0.15
 
     private var pollTimer: Timer?
 
@@ -282,7 +303,9 @@ final class AppState: ObservableObject {
         isListening = true
         isLatched = false
         lastError = nil
-        livePartial = ""
+        committedText = ""
+        committedSamples = 0
+        liveTail = ""
         play(.start)
         pill.set(.listening, "Listening…")
         startLiveTranscript()
@@ -317,26 +340,65 @@ final class AppState: ObservableObject {
         // transcription behind work whose results are already stale.
         guard isListening, livePartialTask == nil, speechStatus.isReady else { return }
 
-        let samples = recorder.snapshot()
-        guard Double(samples.count) / AudioRecorder.sampleRate >= Self.liveMinimumSeconds else {
-            return
-        }
-        let speech = SilenceTrimmer.trim(samples)
-        guard !speech.isEmpty else { return }
+        let all = recorder.snapshot()
+        guard all.count > committedSamples else { return }
+        let tail = Array(all[committedSamples...])
+
+        let tailSeconds = Double(tail.count) / AudioRecorder.sampleRate
+        guard tailSeconds >= Self.liveMinimumSeconds else { return }
+
+        // Long unbroken speech gets a far more forgiving pause threshold, so
+        // the revisable region stays short even without real sentence breaks.
+        let overdue = tailSeconds > Self.forceCommitAfterSeconds
+        let boundary = SilenceTrimmer.commitBoundary(
+            tail,
+            minSilence: overdue ? Self.forcedCommitSilenceSeconds : Self.commitSilenceSeconds,
+            minSpeech: Self.commitMinimumSpeechSeconds
+        )
 
         livePartialTask = Task { [weak self] in
             guard let self else { return }
-            let text = await self.transcriber.partial(speech)
-            guard !Task.isCancelled, self.isListening else {
-                self.livePartialTask = nil
-                return
+            defer { self.livePartialTask = nil }
+
+            if let boundary {
+                await self.commit(tail: tail, upTo: boundary)
+            } else {
+                await self.refreshTail(tail)
             }
-            if let text, text != self.livePartial {
-                self.livePartial = text
-                self.pill.set(.listening, text, isLatched: self.isLatched, isLive: true)
-            }
-            self.livePartialTask = nil
         }
+    }
+
+    /// Transcribes a finished sentence and freezes it.
+    private func commit(tail: [Float], upTo boundary: SilenceTrimmer.CommitPoint) async {
+        let chunk = SilenceTrimmer.trim(Array(tail[0..<boundary.speechEnd]))
+        let text = chunk.isEmpty ? nil : await self.transcriber.partial(chunk)
+
+        guard !Task.isCancelled, isListening else { return }
+
+        if let text {
+            committedText = committedText.isEmpty ? text : committedText + " " + text
+        }
+        // Advance regardless: audio that produced nothing is still spent, and
+        // leaving it in would make every later pass redo it.
+        committedSamples += boundary.resumeAt
+        liveTail = ""
+        showLiveTranscript()
+    }
+
+    /// Re-transcribes only the unsettled tail.
+    private func refreshTail(_ tail: [Float]) async {
+        let speech = SilenceTrimmer.trim(tail)
+        guard !speech.isEmpty else { return }
+        let text = await self.transcriber.partial(speech)
+
+        guard !Task.isCancelled, isListening, let text, text != liveTail else { return }
+        liveTail = text
+        showLiveTranscript()
+    }
+
+    private func showLiveTranscript() {
+        guard !livePartial.isEmpty else { return }
+        pill.set(.listening, livePartial, isLatched: isLatched, isLive: true)
     }
 
     private func endListening(wasLatched: Bool) {
@@ -346,15 +408,26 @@ final class AppState: ObservableObject {
         play(.stop)
 
         let samples = recorder.stop()
-        let speech = SilenceTrimmer.trim(samples)
+        let tail = committedSamples < samples.count
+            ? Array(samples[committedSamples...])
+            : []
+        let speech = SilenceTrimmer.trim(tail)
+        let committed = committedText
 
-        guard !speech.isEmpty else {
+        guard !speech.isEmpty || !committed.isEmpty else {
             pill.set(.idle, "Heard nothing", revertAfter: 1.5)
             return
         }
 
         guard speechStatus.isReady else {
             pill.set(.thinking, "Still loading the speech model…", revertAfter: 3)
+            return
+        }
+
+        // Nothing new since the last commit: what is on screen is already final.
+        guard !speech.isEmpty else {
+            lastTranscript = committed
+            pill.set(.heard, committed, revertAfter: 5)
             return
         }
 
@@ -365,16 +438,22 @@ final class AppState: ObservableObject {
             guard let self else { return }
             let started = Date()
             do {
-                let text = try await self.transcriber.transcribe(speech)
+                let tailText = try await self.transcriber.transcribe(speech)
                 guard !Task.isCancelled else { return }
                 let elapsed = Date().timeIntervalSince(started)
+                let text = committed.isEmpty ? tailText : committed + " " + tailText
                 self.lastTranscript = text
                 self.pill.set(.heard, text, revertAfter: 5)
                 Log.debug(String(format: "heard %.1fs of speech in %.0f ms: %@",
                                  seconds, elapsed * 1000, text))
             } catch Transcriber.TranscriberError.empty {
                 guard !Task.isCancelled else { return }
-                self.pill.set(.idle, "Heard nothing", revertAfter: 1.5)
+                if committed.isEmpty {
+                    self.pill.set(.idle, "Heard nothing", revertAfter: 1.5)
+                } else {
+                    self.lastTranscript = committed
+                    self.pill.set(.heard, committed, revertAfter: 5)
+                }
             } catch {
                 guard !Task.isCancelled else { return }
                 self.lastError = error.localizedDescription

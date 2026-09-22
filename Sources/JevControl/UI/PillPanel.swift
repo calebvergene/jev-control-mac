@@ -18,7 +18,7 @@ final class PillController {
     private(set) var state: PillState = .idle
     private(set) var text: String = "Idle"
     private(set) var isLatched = false
-    private(set) var isLive = false
+    private(set) var anchorToEnd = false
 
     /// When false the pill stays hidden regardless of state.
     var isEnabled = true {
@@ -35,7 +35,7 @@ final class PillController {
         _ state: PillState,
         _ text: String,
         isLatched: Bool = false,
-        isLive: Bool = false,
+        anchorToEnd: Bool = false,
         revertAfter: TimeInterval? = nil
     ) {
         revertWorkItem?.cancel()
@@ -44,7 +44,7 @@ final class PillController {
         self.state = state
         self.text = text
         self.isLatched = isLatched
-        self.isLive = isLive
+        self.anchorToEnd = anchorToEnd
         render()
 
         if let revertAfter {
@@ -73,9 +73,9 @@ final class PillController {
         guard panel == nil else { return }
 
         let view = PillView(state: state, text: text, isLatched: isLatched,
-                            isLive: isLive, width: 260, isMultiline: false)
+                            anchorToEnd: anchorToEnd, width: 260)
         let host = NSHostingView(rootView: view)
-        host.frame = NSRect(x: 0, y: 0, width: 260, height: PillView.lineHeight)
+        host.frame = NSRect(x: 0, y: 0, width: 260, height: PillView.height)
 
         let p = PillPanel(
             contentRect: host.frame,
@@ -106,92 +106,50 @@ final class PillController {
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let maxWidth = min(PillView.maxWidth, visible.width * 0.7)
 
-        let layout = layout(for: text, maxWidth: maxWidth)
+        let width = layout(maxWidth: maxWidth).width
 
         hosting.rootView = PillView(
             state: state,
-            text: layout.text,
+            text: text,
             isLatched: isLatched,
-            isLive: isLive,
-            width: layout.width,
-            isMultiline: layout.isMultiline
+            anchorToEnd: anchorToEnd,
+            width: width
         )
         hosting.layoutSubtreeIfNeeded()
 
         // Top-centre of the screen holding the cursor, just under the menu bar.
-        let x = visible.origin.x + (visible.width - layout.width) / 2
-        let y = visible.origin.y + visible.height - layout.height - 8
+        let x = visible.origin.x + (visible.width - width) / 2
+        let y = visible.origin.y + visible.height - PillView.height - 8
 
-        panel.setFrame(
-            NSRect(x: x, y: y, width: layout.width, height: layout.height),
-            display: true
-        )
-        hosting.frame = NSRect(x: 0, y: 0, width: layout.width, height: layout.height)
+        panel.setFrame(NSRect(x: x, y: y, width: width, height: PillView.height), display: true)
+        hosting.frame = NSRect(x: 0, y: 0, width: width, height: PillView.height)
         panel.orderFrontRegardless()
     }
 
-    // MARK: - Measurement
-
     private struct Layout {
-        var text: String
         var width: CGFloat
-        var height: CGFloat
-        var isMultiline: Bool
     }
 
     private static let font = NSFont.systemFont(ofSize: 13.5, weight: .medium)
 
-    /// Decides the pill's shape from the text itself.
+    /// Sizes the pill to its text, up to a ceiling. Past the ceiling the pill
+    /// stops growing and the text truncates from the front, so it becomes a
+    /// fixed window that speech scrolls through.
     ///
     /// SwiftUI is not asked to size this. An earlier version let the text keep
     /// its ideal width and clamped the window afterwards, which silently
-    /// clipped the end of every long transcript — the half that matters while
-    /// you are still speaking.
-    private func layout(for text: String, maxWidth: CGFloat) -> Layout {
-        let oneLineTextWidth = PillView.textWidth(in: maxWidth, isLatched: isLatched)
-        let measured = ceil(size(of: text, width: .greatestFiniteMagnitude).width)
-
-        if measured <= oneLineTextWidth {
-            let chrome = maxWidth - oneLineTextWidth
-            let width = min(max(measured + chrome, PillView.minWidth), maxWidth)
-            return Layout(text: text, width: width, height: PillView.lineHeight, isMultiline: false)
-        }
-
-        // Wraps: fixed at the maximum width, growing downward.
-        let lineHeight = ceil(size(of: "M", width: oneLineTextWidth).height)
-        let maxTextHeight = lineHeight * CGFloat(PillView.maxLines)
-        let fitted = dropLeadingWords(from: text, width: oneLineTextWidth, maxHeight: maxTextHeight)
-        let textHeight = ceil(size(of: fitted, width: oneLineTextWidth).height)
-
-        return Layout(
-            text: fitted,
-            width: maxWidth,
-            height: textHeight + PillView.verticalPadding * 2,
-            isMultiline: true
-        )
+    /// clipped the end of every long transcript.
+    private func layout(maxWidth: CGFloat) -> Layout {
+        let available = PillView.textWidth(in: maxWidth, isLatched: isLatched)
+        let chrome = maxWidth - available
+        let measured = ceil(size(of: text).width)
+        let width = min(max(measured + chrome, PillView.minWidth), maxWidth)
+        return Layout(width: width)
     }
 
-    /// Trims from the front, so the newest words survive. The opposite of what
-    /// a normal truncation does, and the right way round for a live transcript.
-    private func dropLeadingWords(from text: String, width: CGFloat, maxHeight: CGFloat) -> String {
-        var candidate = text
-        var guardCount = 0
-
-        while ceil(size(of: candidate, width: width).height) > maxHeight, guardCount < 500 {
-            guardCount += 1
-            let body = candidate.hasPrefix("… ") ? String(candidate.dropFirst(2)) : candidate
-            guard let space = body.firstIndex(of: " ") else { break }
-            candidate = "… " + body[body.index(after: space)...]
-        }
-        return candidate
-    }
-
-    private func size(of text: String, width: CGFloat) -> CGSize {
-        let attributed = NSAttributedString(string: text, attributes: [.font: Self.font])
-        return attributed.boundingRect(
-            with: NSSize(width: width, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading]
-        ).size
+    private func size(of text: String) -> CGSize {
+        NSAttributedString(string: text, attributes: [.font: Self.font])
+            .size()
     }
 
     private func screenUnderCursor() -> NSScreen? {

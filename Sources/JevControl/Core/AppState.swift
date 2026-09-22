@@ -398,7 +398,7 @@ final class AppState: ObservableObject {
 
     private func showLiveTranscript() {
         guard !livePartial.isEmpty else { return }
-        pill.set(.listening, livePartial, isLatched: isLatched, isLive: true)
+        pill.set(.listening, livePartial, isLatched: isLatched, anchorToEnd: true)
     }
 
     private func endListening(wasLatched: Bool) {
@@ -427,12 +427,12 @@ final class AppState: ObservableObject {
         // Nothing new since the last commit: what is on screen is already final.
         guard !speech.isEmpty else {
             lastTranscript = committed
-            pill.set(.heard, committed, revertAfter: 5)
+            pill.set(.heard, committed, anchorToEnd: true, revertAfter: 5)
             return
         }
 
         let seconds = Double(speech.count) / AudioRecorder.sampleRate
-        pill.set(.thinking, livePartial.isEmpty ? "Transcribing…" : livePartial, isLive: !livePartial.isEmpty)
+        pill.set(.thinking, livePartial.isEmpty ? "Transcribing…" : livePartial, anchorToEnd: !livePartial.isEmpty)
 
         transcriptionTask = Task { [weak self] in
             guard let self else { return }
@@ -443,7 +443,7 @@ final class AppState: ObservableObject {
                 let elapsed = Date().timeIntervalSince(started)
                 let text = committed.isEmpty ? tailText : committed + " " + tailText
                 self.lastTranscript = text
-                self.pill.set(.heard, text, revertAfter: 5)
+                self.pill.set(.heard, text, anchorToEnd: true, revertAfter: 5)
                 Log.debug(String(format: "heard %.1fs of speech in %.0f ms: %@",
                                  seconds, elapsed * 1000, text))
             } catch Transcriber.TranscriberError.empty {
@@ -452,7 +452,7 @@ final class AppState: ObservableObject {
                     self.pill.set(.idle, "Heard nothing", revertAfter: 1.5)
                 } else {
                     self.lastTranscript = committed
-                    self.pill.set(.heard, committed, revertAfter: 5)
+                    self.pill.set(.heard, committed, anchorToEnd: true, revertAfter: 5)
                 }
             } catch {
                 guard !Task.isCancelled else { return }
@@ -466,7 +466,7 @@ final class AppState: ObservableObject {
     private func markLatched() {
         isLatched = true
         pill.set(.listening, livePartial.isEmpty ? "Listening…" : livePartial,
-                 isLatched: true, isLive: !livePartial.isEmpty)
+                 isLatched: true, anchorToEnd: !livePartial.isEmpty)
     }
 
     // MARK: - Feedback

@@ -25,6 +25,7 @@ private struct MenuBarContent: View {
         Divider()
 
         Button("Setup…") { delegate.showOnboarding() }
+        Button("Decisions…") { delegate.showDebug() }
         if state.needsRelaunch {
             Button("Relaunch to pick up permissions") { state.relaunch() }
         }
@@ -48,6 +49,7 @@ private struct MenuBarContent: View {
     }
 
     private var statusLine: String {
+        if !state.hasAPIKey { return "No API key" }
         if state.needsRelaunch { return "Relaunch needed" }
         if !state.isTapActive { return "Waiting for permissions" }
         if state.needsRemap { return "Caps Lock not remapped" }
@@ -59,6 +61,7 @@ private struct MenuBarContent: View {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let onboarding = OnboardingWindowController()
+    private let debug = DebugWindowController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Belt and braces alongside LSUIElement: no Dock icon, never activates
@@ -80,5 +83,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showOnboarding() {
         onboarding.show(state: AppState.shared)
+    }
+
+    func showDebug() {
+        debug.show(log: AppState.shared.decisions)
     }
 }

@@ -74,6 +74,10 @@ struct OnboardingView: View {
 
             Divider()
 
+            JevSection(state: state)
+
+            Divider()
+
             SpeechSection(state: state)
 
             Divider()
@@ -94,6 +98,36 @@ struct OnboardingView: View {
         .padding(22)
         .frame(width: 520)
         .onAppear { state.refresh() }
+    }
+}
+
+/// The TypeSafe credential. Stored in the keychain, not UserDefaults — it is a
+/// credential, and this app's defaults are world-readable inside the account.
+private struct JevSection: View {
+    @ObservedObject var state: AppState
+    @State private var draft = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Jev").font(.headline)
+
+            HStack(spacing: 10) {
+                StatusDot(ok: state.hasAPIKey)
+                SecureField("TypeSafe API key", text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                Button(state.hasAPIKey ? "Replace" : "Save") {
+                    state.setAPIKey(draft)
+                    draft = ""
+                }
+                .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+
+            Text(state.hasAPIKey
+                 ? "Stored in your login keychain. Get a key at console.typesafe.ai."
+                 : "Commands need a key from console.typesafe.ai. Speech still works without one.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 

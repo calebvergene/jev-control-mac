@@ -65,6 +65,8 @@ final class AppState: ObservableObject {
     }
 
     @Published private(set) var speechStatus: Transcriber.Status = .idle
+    @Published private(set) var hasAPIKey = Credentials.hasAPIKey
+    @Published private(set) var isExecuting = false
     /// The last thing heard, kept for the Setup window.
     @Published private(set) var lastTranscript: String?
 
@@ -76,6 +78,9 @@ final class AppState: ObservableObject {
 
     private let recorder = AudioRecorder()
     private let transcriber = Transcriber()
+    private let jev = JevClient()
+    private lazy var brain = Brain(client: jev)
+    let decisions = DecisionLog.shared
     /// Guards against a second utterance landing while the first is transcribing.
     private var transcriptionTask: Task<Void, Never>?
 
@@ -143,6 +148,100 @@ final class AppState: ObservableObject {
         hotkey.start()
         startPolling()
         loadModel()
+        Task { await jev.warmUp() }
+    }
+
+    // MARK: - Commands
+
+    func setAPIKey(_ key: String) {
+        Credentials.apiKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        hasAPIKey = Credentials.hasAPIKey
+        if hasAPIKey { Task { await jev.warmUp() } }
+    }
+
+    /// Transcript in, action out.
+    ///
+    /// A compound utterance is split in code and each part planned separately.
+    /// Jev only tells us that the utterance *was* compound; the split itself is
+    /// regex, so a step can never be something the user did not say.
+    private func handle(transcript: String) {
+        guard hasAPIKey else {
+            pill.set(.error, "No TypeSafe API key — add one in Setup", revertAfter: 5)
+            decisions.record(utterance: transcript, plan: nil,
+                             outcome: "no API key", failed: true)
+            return
+        }
+
+        isExecuting = true
+        pill.set(.thinking, transcript, anchorToEnd: true)
+
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.isExecuting = false }
+
+            let front = AppCatalog.frontmostApp()
+            do {
+                let first = try await self.brain.evaluate(utterance: transcript, frontmostApp: front)
+                let steps = first.isCompound
+                    ? TextCandidates.splitCompound(transcript)
+                    : [transcript]
+
+                if steps.count <= 1 {
+                    await self.execute(first, utterance: transcript)
+                    return
+                }
+                // Re-plan each part: the whole-utterance plan answered
+                // questions about a sentence that is about to be split up.
+                for step in steps {
+                    let plan = try await self.brain.evaluate(
+                        utterance: step,
+                        frontmostApp: AppCatalog.frontmostApp()
+                    )
+                    let keepGoing = await self.execute(plan, utterance: step)
+                    guard keepGoing else { break }
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                }
+            } catch {
+                self.lastError = error.localizedDescription
+                self.pill.set(.error, error.localizedDescription, revertAfter: 5)
+                self.play(.failure)
+                self.decisions.record(utterance: transcript, plan: nil,
+                                      outcome: error.localizedDescription, failed: true)
+            }
+        }
+    }
+
+    /// Returns false when a compound run should stop.
+    @discardableResult
+    private func execute(_ plan: Plan, utterance: String) async -> Bool {
+        let outcome = await CommandRunner.run(plan)
+        var keepGoing = true
+
+        switch outcome {
+        case .done(let message):
+            pill.set(.done, message.isEmpty ? plan.action.label : message, revertAfter: 3)
+            play(.success)
+            decisions.record(utterance: utterance, plan: plan, outcome: message, failed: false)
+        case .unsure(let message):
+            pill.set(.error, message, revertAfter: 3)
+            play(.failure)
+            decisions.record(utterance: utterance, plan: plan, outcome: message, failed: true)
+            keepGoing = false
+        case .notACommand:
+            pill.set(.idle, "Not a command", revertAfter: 2)
+            decisions.record(utterance: utterance, plan: plan, outcome: "not a command", failed: false)
+            keepGoing = false
+        case .unsupported(let message):
+            pill.set(.error, message, revertAfter: 4)
+            play(.failure)
+            decisions.record(utterance: utterance, plan: plan, outcome: message, failed: true)
+            keepGoing = false
+        case .stop:
+            pill.set(.idle, "Stopped", revertAfter: 2)
+            decisions.record(utterance: utterance, plan: plan, outcome: "stop", failed: false)
+            keepGoing = false
+        }
+        return keepGoing
     }
 
     func shutDown() {
@@ -427,7 +526,7 @@ final class AppState: ObservableObject {
         // Nothing new since the last commit: what is on screen is already final.
         guard !speech.isEmpty else {
             lastTranscript = committed
-            pill.set(.heard, committed, anchorToEnd: true, revertAfter: 5)
+            handle(transcript: committed)
             return
         }
 
@@ -443,16 +542,16 @@ final class AppState: ObservableObject {
                 let elapsed = Date().timeIntervalSince(started)
                 let text = committed.isEmpty ? tailText : committed + " " + tailText
                 self.lastTranscript = text
-                self.pill.set(.heard, text, anchorToEnd: true, revertAfter: 5)
                 Log.debug(String(format: "heard %.1fs of speech in %.0f ms: %@",
                                  seconds, elapsed * 1000, text))
+                self.handle(transcript: text)
             } catch Transcriber.TranscriberError.empty {
                 guard !Task.isCancelled else { return }
                 if committed.isEmpty {
                     self.pill.set(.idle, "Heard nothing", revertAfter: 1.5)
                 } else {
                     self.lastTranscript = committed
-                    self.pill.set(.heard, committed, anchorToEnd: true, revertAfter: 5)
+                    self.handle(transcript: committed)
                 }
             } catch {
                 guard !Task.isCancelled else { return }
@@ -474,6 +573,8 @@ final class AppState: ObservableObject {
     private enum Chime: String {
         case start = "Tink"
         case stop = "Pop"
+        case success = "Glass"
+        case failure = "Basso"
     }
 
     private func play(_ chime: Chime) {

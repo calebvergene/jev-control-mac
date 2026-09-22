@@ -27,3 +27,28 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         window?.makeKeyAndOrderFront(nil)
     }
 }
+
+
+/// Host for the decision log.
+@MainActor
+final class DebugWindowController: NSObject {
+    private var window: NSWindow?
+
+    func show(log: DecisionLog) {
+        if window == nil {
+            let w = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 620, height: 460),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            w.title = "Jev Control Decisions"
+            w.contentView = NSHostingView(rootView: DebugView(log: log))
+            w.isReleasedWhenClosed = false
+            w.center()
+            window = w
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+    }
+}

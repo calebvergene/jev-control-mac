@@ -5,6 +5,9 @@ struct PillView: View {
     let state: PillState
     let text: String
     let isLatched: Bool
+    /// A transcript still being spoken. Truncates from the front so the newest
+    /// words stay visible as the sentence outgrows the pill.
+    let isLive: Bool
 
     @State private var pulse = false
 
@@ -29,7 +32,7 @@ struct PillView: View {
                 .font(.system(size: 13.5, weight: .medium))
                 .foregroundStyle(.white)
                 .lineLimit(1)
-                .truncationMode(.tail)
+                .truncationMode(isLive ? .head : .tail)
                 .fixedSize(horizontal: true, vertical: false)
 
             if isLatched {

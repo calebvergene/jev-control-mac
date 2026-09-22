@@ -79,6 +79,18 @@ final class AppState: ObservableObject {
     /// Guards against a second utterance landing while the first is transcribing.
     private var transcriptionTask: Task<Void, Never>?
 
+    /// Live transcript, refreshed while the key is held.
+    private var liveTimer: Timer?
+    private var livePartialTask: Task<Void, Never>?
+    private var livePartial: String = ""
+
+    /// How often the growing buffer is re-transcribed. Short enough to feel
+    /// live, long enough that a pass has comfortably finished before the next
+    /// one starts — base.en does ~1.8s of audio in ~90 ms.
+    private static let liveInterval: TimeInterval = 0.45
+    /// Below this there is not enough audio for a useful hypothesis.
+    private static let liveMinimumSeconds: Double = 0.6
+
     private var pollTimer: Timer?
 
     private enum Keys {
@@ -270,13 +282,67 @@ final class AppState: ObservableObject {
         isListening = true
         isLatched = false
         lastError = nil
+        livePartial = ""
         play(.start)
         pill.set(.listening, "Listening…")
+        startLiveTranscript()
+    }
+
+    // MARK: - Live transcript
+
+    /// Re-transcribes everything captured so far, on a timer, so the pill fills
+    /// in while you are still speaking. Each pass is a fresh hypothesis over
+    /// the whole utterance rather than an append, so later words can revise
+    /// earlier ones — which is what makes the result usable rather than a
+    /// stream of first guesses.
+    private func startLiveTranscript() {
+        liveTimer?.invalidate()
+        let timer = Timer(timeInterval: Self.liveInterval, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in self.tickLiveTranscript() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        liveTimer = timer
+    }
+
+    private func stopLiveTranscript() {
+        liveTimer?.invalidate()
+        liveTimer = nil
+        livePartialTask?.cancel()
+        livePartialTask = nil
+    }
+
+    private func tickLiveTranscript() {
+        // Skip rather than queue: a backlog of partials would delay the final
+        // transcription behind work whose results are already stale.
+        guard isListening, livePartialTask == nil, speechStatus.isReady else { return }
+
+        let samples = recorder.snapshot()
+        guard Double(samples.count) / AudioRecorder.sampleRate >= Self.liveMinimumSeconds else {
+            return
+        }
+        let speech = SilenceTrimmer.trim(samples)
+        guard !speech.isEmpty else { return }
+
+        livePartialTask = Task { [weak self] in
+            guard let self else { return }
+            let text = await self.transcriber.partial(speech)
+            guard !Task.isCancelled, self.isListening else {
+                self.livePartialTask = nil
+                return
+            }
+            if let text, text != self.livePartial {
+                self.livePartial = text
+                self.pill.set(.listening, text, isLatched: self.isLatched, isLive: true)
+            }
+            self.livePartialTask = nil
+        }
     }
 
     private func endListening(wasLatched: Bool) {
         isListening = false
         isLatched = false
+        stopLiveTranscript()
         play(.stop)
 
         let samples = recorder.stop()
@@ -293,7 +359,7 @@ final class AppState: ObservableObject {
         }
 
         let seconds = Double(speech.count) / AudioRecorder.sampleRate
-        pill.set(.thinking, "Transcribing…")
+        pill.set(.thinking, livePartial.isEmpty ? "Transcribing…" : livePartial, isLive: !livePartial.isEmpty)
 
         transcriptionTask = Task { [weak self] in
             guard let self else { return }
@@ -320,7 +386,8 @@ final class AppState: ObservableObject {
     /// The press turned out to be a tap: recording stays on until the next press.
     private func markLatched() {
         isLatched = true
-        pill.set(.listening, "Listening…", isLatched: true)
+        pill.set(.listening, livePartial.isEmpty ? "Listening…" : livePartial,
+                 isLatched: true, isLive: !livePartial.isEmpty)
     }
 
     // MARK: - Feedback

@@ -25,8 +25,8 @@ pill are in. No microphone, no transcription, no actions yet.
   lock glyph when latched.
 - Optional Caps Lock → F18 remap via `hidutil`, persisted with a LaunchAgent,
   with an Undo button.
-- Speech to text on device with WhisperKit: hold the key, speak, and the pill
-  shows what it heard.
+- Live speech to text on device with WhisperKit: the pill fills in while you
+  are still talking, then settles on a final pass when you release the key.
 
 ## Requirements
 
@@ -113,8 +113,8 @@ source, and a downloaded unsigned build will be blocked by Gatekeeper.
    second, so the dots go green without a relaunch, and the key tap installs
    itself on the next retry — also without a relaunch.
 3. Wait for Setup › Speech to say "Model ready" — the first launch downloads it.
-4. Hold **Left Option** and say something. The pill turns red while you hold it,
-   then shows what it heard.
+4. Hold **Left Option** and say something. The transcript fills in *while you
+   speak*, and is replaced by a final pass when you release.
 5. Tap Left Option quickly instead. The pill stays red with a padlock. Press
    again to stop.
 6. Type in TextEdit, hold Left Option mid-word, keep typing. Focus must not

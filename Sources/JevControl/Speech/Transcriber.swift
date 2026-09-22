@@ -151,5 +151,28 @@ actor Transcriber {
         return text
     }
 
+    /// A best-effort pass for the live transcript. Unlike `transcribe` this
+    /// never throws — a partial that fails or comes back empty just means the
+    /// previous partial keeps showing.
+    func partial(_ samples: [Float]) async -> String? {
+        guard let kit, status.isReady, !samples.isEmpty else { return nil }
+
+        var options = DecodingOptions()
+        options.language = "en"
+        options.task = .transcribe
+        options.temperature = 0
+        options.withoutTimestamps = true
+        options.skipSpecialTokens = true
+
+        guard let results = try? await kit.transcribe(audioArray: samples, decodeOptions: options) else {
+            return nil
+        }
+        let text = results
+            .map(\.text)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+
     func currentStatus() -> Status { status }
 }

@@ -18,6 +18,7 @@ final class PillController {
     private(set) var state: PillState = .idle
     private(set) var text: String = "Idle"
     private(set) var isLatched = false
+    private(set) var isLive = false
 
     /// When false the pill stays hidden regardless of state.
     var isEnabled = true {
@@ -30,13 +31,20 @@ final class PillController {
 
     /// Show a state. With `revertAfter`, fall back to idle after that many
     /// seconds — unless something newer was shown in the meantime.
-    func set(_ state: PillState, _ text: String, isLatched: Bool = false, revertAfter: TimeInterval? = nil) {
+    func set(
+        _ state: PillState,
+        _ text: String,
+        isLatched: Bool = false,
+        isLive: Bool = false,
+        revertAfter: TimeInterval? = nil
+    ) {
         revertWorkItem?.cancel()
         revertWorkItem = nil
 
         self.state = state
         self.text = text
         self.isLatched = isLatched
+        self.isLive = isLive
         render()
 
         if let revertAfter {
@@ -64,7 +72,7 @@ final class PillController {
     private func build() {
         guard panel == nil else { return }
 
-        let view = PillView(state: state, text: text, isLatched: isLatched)
+        let view = PillView(state: state, text: text, isLatched: isLatched, isLive: isLive)
         let host = NSHostingView(rootView: view)
         host.frame = NSRect(x: 0, y: 0, width: 260, height: PillView.height)
 
@@ -93,7 +101,7 @@ final class PillController {
         build()
         guard let panel, let hosting else { return }
 
-        hosting.rootView = PillView(state: state, text: text, isLatched: isLatched)
+        hosting.rootView = PillView(state: state, text: text, isLatched: isLatched, isLive: isLive)
         hosting.layoutSubtreeIfNeeded()
 
         let width = min(max(hosting.fittingSize.width, PillView.minWidth), PillView.maxWidth)

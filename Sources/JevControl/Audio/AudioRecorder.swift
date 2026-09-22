@@ -115,6 +115,14 @@ final class AudioRecorder {
         isRecording = true
     }
 
+    /// Everything captured so far, without interrupting capture. Used to drive
+    /// the live transcript while the key is still held.
+    func snapshot() -> [Float] {
+        lock.lock()
+        defer { lock.unlock() }
+        return samples
+    }
+
     /// Stops capture and hands back everything recorded.
     @discardableResult
     func stop() -> [Float] {
